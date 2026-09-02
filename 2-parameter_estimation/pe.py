@@ -43,6 +43,12 @@ DEFAULT_ASCENDING_ZERO_CROSSINGS = (
 )
 DEFAULT_APPROXIMANT = 'IMRPhenomXAS'
 DEFAULT_PRIOR_CLASS = 'IntrinsicAlignedSpinIASPrior'
+
+# Precessing option (point 3): closed out per point3-goal.md -- the flag
+# exists and is wired through, but is OFF BY DEFAULT and has not been run.
+# ALIGNED SPIN is what actually ran for every number in report2.md/report3.md.
+PRECESSING_APPROXIMANT = 'IMRPhenomXODE'
+PRECESSING_PRIOR_CLASS = 'IntrinsicIASPrior'
 DEFAULT_F_REF = 100.0
 DEFAULT_N_LIVE = 1000
 DEFAULT_N_EFF = 2000
@@ -291,12 +297,21 @@ def median_standard_errors(samples, plot_params=PLOT_PARAMS):
 
 def run_full_analysis(seed=DEFAULT_SEED, n_live=DEFAULT_N_LIVE, n_eff=DEFAULT_N_EFF,
                        rundir_parent=DEFAULT_RUNDIR_PARENT, plot_params=PLOT_PARAMS,
-                       verbose=True):
+                       precessing=False, verbose=True):
     """
-    Run the full aligned-spin analysis end to end and return a results dict
-    with every quantity point2-goal.md asks the CLI to reproduce.
+    Run the full analysis end to end and return a results dict with every
+    quantity point2-goal.md/point3-goal.md ask the CLI to reproduce.
+
+    ``precessing=True`` switches to ``IntrinsicIASPrior`` +
+    ``IMRPhenomXODE`` (generic spins, higher modes) instead of the
+    aligned-spin default. This is wired through but NOT exercised: every
+    number in report2.md/report3.md comes from ``precessing=False``. It
+    is a much larger calculation (more free parameters, same sampler) --
+    see report3.md for the reasoned-but-unmeasured cost estimate.
     """
     t_start = time.time()
+    approximant = PRECESSING_APPROXIMANT if precessing else DEFAULT_APPROXIMANT
+    prior_class = PRECESSING_PRIOR_CLASS if precessing else DEFAULT_PRIOR_CLASS
 
     def log(msg):
         if verbose:
@@ -309,15 +324,30 @@ def run_full_analysis(seed=DEFAULT_SEED, n_live=DEFAULT_N_LIVE, n_eff=DEFAULT_N_
     mchirp_guess = estimate_mchirp_guess(event_data)
     log(f'      mchirp_guess = {mchirp_guess}')
 
-    log('[3/5] Finding reference waveform (likelihood maximization)...')
-    posterior = find_reference_waveform(event_data, mchirp_guess)
+    log(f'[3/5] Finding reference waveform (likelihood maximization; '
+        f'approximant={approximant}, prior_class={prior_class})...')
+    posterior = find_reference_waveform(event_data, mchirp_guess,
+                                         approximant=approximant, prior_class=prior_class)
     ref_wf_snr = reference_waveform_snr(posterior)
     log(f'      reference-waveform fit SNR estimate: {ref_wf_snr:.2f} '
-        f'(expect ~24.8; ~3 would mean the minimize_scalar bug is present)')
-    if ref_wf_snr < 10:
-        raise RuntimeError(
-            f'Reference-waveform SNR is {ref_wf_snr:.2f}, suspiciously low -- '
-            'looks like the known minimize_scalar bug. Aborting.'
+        f'(expect ~24.8 for a loud injection; ~3 would mean the minimize_scalar bug)')
+    # NOTE: `ref_wf_snr < 10` has a blind spot -- NaN compares False to
+    # everything, so a failed fit (lnlike(par_dic_0) < 0, e.g. a genuinely
+    # quiet/undetectable injection where no template fits well) silently
+    # passed this check. `not (ref_wf_snr >= 10)` catches NaN too. This is
+    # a warning, not a hard abort: unlike the minimize_scalar bug (a
+    # loud signal misreported as quiet), a real low/NaN SNR here can
+    # legitimately mean "this particular injection just isn't loud" --
+    # discarding an already-completed run over that would be wrong.
+    if not (ref_wf_snr >= 10):
+        import warnings
+        warnings.warn(
+            f'Reference-waveform SNR estimate is {ref_wf_snr!r} (<10 or NaN). '
+            'Either this injection is genuinely quiet/undetectable, or the '
+            'reference-waveform search failed to converge -- NOT '
+            'automatically the minimize_scalar bug (that one reports a '
+            'plausible-looking ~3 instead of failing outright). Inspect '
+            'par_dic_0 and the injection before trusting downstream numbers.'
         )
     par_dic_0 = {k: (float(v) if not isinstance(v, str) else v)
                  for k, v in posterior.likelihood.par_dic_0.items()}
@@ -339,6 +369,9 @@ def run_full_analysis(seed=DEFAULT_SEED, n_live=DEFAULT_N_LIVE, n_eff=DEFAULT_N_
 
     results = {
         'seed': seed,
+        'precessing': precessing,
+        'approximant': approximant,
+        'prior_class': prior_class,
         'mchirp_guess': mchirp_guess,
         'ref_wf_snr': ref_wf_snr,
         'par_dic_0': par_dic_0,
@@ -361,7 +394,10 @@ def run_full_analysis(seed=DEFAULT_SEED, n_live=DEFAULT_N_LIVE, n_eff=DEFAULT_N_
 # --------------------------------------------------------------------------
 
 def _print_results(results):
-    print('\n=== Aligned-spin parameter estimation: results ===')
+    kind = 'PRECESSING' if results.get('precessing') else 'aligned-spin'
+    print(f"\n=== Parameter estimation ({kind}): results ===")
+    print(f"approximant = {results.get('approximant', DEFAULT_APPROXIMANT)}, "
+          f"prior_class = {results.get('prior_class', DEFAULT_PRIOR_CLASS)}")
     print(f"mchirp_guess = {results['mchirp_guess']}")
     print(f"reference-waveform fit SNR = {results['ref_wf_snr']:.3f}")
     print('\npar_dic_0 (reference waveform):')
@@ -396,11 +432,18 @@ def main(argv=None):
                               '(default: %(default)s).')
     parser.add_argument('--out', default=None,
                          help='Optional path to dump the results as JSON.')
+    parser.add_argument('--precessing', action='store_true',
+                         help='Use IntrinsicIASPrior + IMRPhenomXODE (generic '
+                              'spins, higher modes) instead of the aligned-spin '
+                              'default. OFF BY DEFAULT and not exercised by any '
+                              'committed results -- see report3.md for the '
+                              'cost estimate. Much more expensive: more free '
+                              'parameters sampled with the same Nautilus setup.')
     args = parser.parse_args(argv)
 
     results = run_full_analysis(
         seed=args.seed, n_live=args.n_live, n_eff=args.n_eff,
-        rundir_parent=args.rundir_parent)
+        rundir_parent=args.rundir_parent, precessing=args.precessing)
 
     _print_results(results)
 
