@@ -1,0 +1,6 @@
+# Sampler run outputs are large binary artifacts (checkpoint.hdf5, .npz,
+# .feather); the numbers extracted from them are committed in
+# runs/notebook_baseline/notebook_numbers.json and runs/cli_run/cli_results.json.
+runs/notebook_baseline/pe_runs/
+runs/cli_run/pe_runs/
+pe_runs/
