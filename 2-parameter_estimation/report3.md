@@ -116,6 +116,6 @@ at build time. Checked two ways:
 | GW0 (seed=0) sampling — reused from point 2, **not re-run** | 615.8 s (already spent, point 2) |
 | GW1 (seed=1) sampling — new for point 3 | 300.1 s |
 | Everything else for point 3 (writing `pe.py`'s `--precessing` flag, the corner-plot/HTML build script, `pe.html`'s markup/CSS/JS, the NaN-guard bug fix, jsdom verification, this report) | ran concurrently with GW1's background sampling, plus wrap-up after |
-| **Total wall clock for point 3** (from creating `point3-goal.md` to finishing this report and committing) | **≈14 min**, well inside the ~45-minute hard budget |
+| **Total wall clock for point 3** (from creating `point3-goal.md` to committing+pushing, 18:27–18:40 UTC 2026-09-02) | **≈13 min**, well inside the ~45-minute hard budget |
 
 Machine: 2 vCPUs, no GPU (same as point 2).
